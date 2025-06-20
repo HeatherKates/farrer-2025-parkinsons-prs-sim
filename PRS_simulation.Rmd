@@ -1,0 +1,196 @@
+---
+title: "Simulating Parkinson's Polygenic Risk Score (PRS)"
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_depth: 2
+---
+
+```{r setup, include=FALSE}
+library(data.table)
+library(readxl)
+library(ggplot2)
+library(downloadthis)
+``` 
+
+# Project Summary
+
+**PI**: [Dr. Matt Farrer](mailto:m.farrer@ufl.edu)
+
+**Institution**: University of Florida
+
+**Department**: MD-NEUROLOGY-MOVEMENT DISORDER
+
+**Study Contact**: [Dr. Matt Farrer](mailto:m.farrer@ufl.edu)
+
+**Project Title**: Matt Farrer invited review 
+
+**Study Summary**:To simulate polygenic risk scores for Parkinson's disease using public GWAS statistics and create summary figure
+
+**Analysis goal(s)**: This report demonstrates a simulation of polygenic risk scores (PRS) for Parkinson’s disease using publicly available GWAS summary statistics from the study *“Novel Parkinson’s Disease Genetic Risk Factors Within and Across European Populations”* by the Global Parkinson’s Genetics Program (GP2) and Hampton L. Leonard ([medRxiv, 2025.03.14.24319455](https://doi.org/10.1101/2025.03.14.24319455)). We use a list of 157 lead loci from the GP2 meta-analysis to model genetic risk in a synthetic European-ancestry population. The workflow includes cleaning GWAS input, simulating genotypes under Hardy-Weinberg equilibrium, calculating PRS and odds ratios (OR), and visualizing the PRS distribution.
+
+**Report-prepared-by**: 
+  - [Dr. Heather Kates](mailto:hkates@ufl.edu), Bioinformatics Analyst, UF Health Cancer Center BCB-SR
+
+
+## Step 1: Load and Inspect GWAS Summary Statistics
+
+We start with Table S4 from the Leonard et al. 2025 preprint:
+https://www.medrxiv.org/content/10.1101/2025.03.14.24319455v1
+
+This table includes a curated list of 157 lead SNPs associated with Parkinson's disease across diverse ancestries.
+
+```{r load-gwas}
+# Load Table S4 from the supplemental Excel file
+gwas_file <- "Leonard_2025_319455_file04.xlsx"
+gwas <- as.data.table(read_excel(gwas_file, sheet = "Table S4"))
+
+# View the first few rows
+head(gwas)
+```
+
+## Step 2: Select and Rename Relevant Columns
+
+We extract columns relevant to PRS construction:
+- `rsID`: SNP identifier
+- `Effect allele`: allele associated with the effect (risk/protection)
+- `Freq, EUR non-Finnish`: frequency of effect allele in EUR population
+- `BETA, EUR non-Finnish`: log-odds ratio of effect allele on disease risk
+
+```{r clean-columns}
+# Rename columns for clarity
+setnames(gwas,
+         c("rsID", "Effect allele", "Freq, EUR non-Finnish", "BETA, EUR non-Finnish"),
+         c("rsID", "Effect_Allele", "AF_EUR", "Beta"))
+
+# Drop rows with missing values
+gwas_clean <- gwas[!is.na(rsID) & !is.na(Effect_Allele) & !is.na(AF_EUR) & !is.na(Beta)]
+
+# Filter out rare SNPs (AF < 0.01)
+gwas_filtered <- gwas_clean[AF_EUR >= 0.01]
+
+# Show the resulting cleaned table
+head(gwas_filtered)
+summary(gwas_filtered$Beta)
+summary(gwas_filtered$AF_EUR)
+```
+
+## Step 3: Save Cleaned PRS Table for Reuse
+
+We save the cleaned SNP list to a `.tsv` file for simulation.
+
+```{r save-prs-table}
+fwrite(gwas_filtered[, .(rsID, Effect_Allele, AF_EUR, Beta)],
+       "PRS_summary_table_EUR.tsv", sep = "\t")
+```
+
+```{r download-button, echo=FALSE}
+as.data.frame(gwas_filtered[, .(rsID, Effect_Allele, AF_EUR, Beta)]) %>% download_this(
+  output_name = "PRS_summary_table_EUR",
+  output_extension = ".xlsx",
+  button_label = "Download Cleaned SNP Table",
+  button_type = "primary",
+  has_icon = TRUE,
+  icon = "fa fa-save"
+)
+```
+
+
+## Step 4: Simulate Genotypes and Calculate PRS and OR
+
+We simulate genotypes for 100,000 synthetic individuals assuming Hardy-Weinberg equilibrium using the effect allele frequencies. For each SNP:
+- Genotype is drawn from a binomial distribution with 2 trials and success probability = `AF_EUR`
+- PRS is computed as: `sum(Beta * Genotype)`
+
+```{r simulate-prs}
+# set seed for reproducible simulation
+set.seed(123)
+
+# Load cleaned table
+prs_table <- fread("PRS_summary_table_EUR.tsv")
+n_individuals <- 100000
+n_snps <- nrow(prs_table)
+
+# Function to simulate genotypes
+generate_genotype <- function(af, n) {
+  rbinom(n, size = 2, prob = af)
+}
+
+# Create matrix to hold all genotypes (individuals x SNPs)
+genotype_matrix <- matrix(nrow = n_individuals, ncol = n_snps)
+colnames(genotype_matrix) <- prs_table$rsID
+
+# Initialize PRS vector
+prs_scores <- numeric(n_individuals)
+
+# Simulate genotypes and calculate PRS
+for (i in seq_len(n_snps)) {
+  genotype <- generate_genotype(prs_table$AF_EUR[i], n_individuals)
+  genotype_matrix[, i] <- genotype
+  prs_scores <- prs_scores + genotype * prs_table$Beta[i]
+}
+
+# Create full output data frame with PRS and OR
+prs_df <- as.data.frame(genotype_matrix)
+prs_df$PRS <- prs_scores
+prs_df$OR <- exp(prs_scores)
+
+# Preview table
+cat("\nPreview: Genotype values for the first 5 SNPs (of 157), followed by simulated PRS and exponentiated Odds Ratio (OR):\n")
+head(prs_df[, c(names(prs_df)[1:5], "PRS", "OR")])
+
+cat("\nSummary of simulated PRS values (log-odds scale):\n")
+summary(prs_df$PRS)
+
+cat("\nSummary of exponentiated PRS (interpreted as relative Odds Ratios):\n")
+summary(prs_df$OR)
+```
+
+```{r download-button-2, echo=FALSE}
+prs_df %>% download_this(
+  output_name = "PRS_simulation_result",
+  output_extension = ".xlsx",
+  button_label = "Download simulated lead loci genotypes, PRS and OR for 100K population",
+  button_type = "primary",
+  has_icon = TRUE,
+  icon = "fa fa-save"
+)
+```
+
+## Step 5: Visualize PRS Distribution
+
+This plot shows the distribution of simulated polygenic risk scores (PRS) in a synthetic European population (n = 100,000), based on 157 Parkinson’s-associated SNPs (lead loci) from the GP2 meta-analysis. Each PRS is the sum of allele dosages (0, 1, 2) weighted by GWAS-derived effect sizes (Beta), which are expressed on the log-odds scale. The x-axis represents cumulative genetic liability: a PRS of 0 corresponds to average (baseline) odds, while values above or below 0 reflect increased or decreased genetic risk, respectively.
+
+The distribution is approximately normal and centered around ~0.6 log-odds, indicating that the average person in this simulation has a modestly elevated cumulative genetic risk relative to a theoretical individual with PRS = 0 (i.e., someone who carries no risk alleles at any of these loci). This upward shift reflects the fact that the 157 SNPs were selected because they are associated with disease (many have positive effect sizes, and their risk alleles are relatively common in the population). 
+
+```{r plot-prs}
+ggplot(prs_df, aes(x = PRS)) +
+  geom_density(fill = "steelblue", alpha = 0.6) +
+  labs(
+    title = "Simulated PRS Distribution in Synthetic EUR Population",
+    subtitle = "Based on 157 Parkinson's-associated SNPs (GP2 Meta-analysis)",
+    x = "Polygenic Risk Score",
+    y = "Density"
+  ) +
+  theme_minimal()
+```
+
+### Visualize Odds Ratio Distribution
+
+This plot shows the same simulated data, but after applying an exponential transformation to the PRS: exp(PRS). While the original PRS is on a log-odds scale (because beta values from GWAS are on a log scale), exponentiating it places the values on a more intuitive odds ratio (OR) scale. This transformation helps interpret each individual’s cumulative genetic burden in terms of multiplicative change in odds of Parkinson’s disease. For example, exp(PRS) = 2 means twice the odds of disease compared to someone with a baseline PRS of 0 (OR = 1).
+
+The resulting distribution is right-skewed and shows that most individuals in the population have a cumulative OR between 1 and 3, with a small proportion reaching much higher values (>5). Some individuals fall below OR = 1, indicating a net protective genetic profile (i.e., more protective alleles than risk alleles).
+
+```{r}
+# Plot cumulative OR distribution
+ggplot(prs_df, aes(x = OR)) +
+  geom_density(fill = "darkred", alpha = 0.6) +
+  labs(
+    title = "Simulated Cumulative Odds Ratio Distribution",
+    subtitle = "exp(PRS) based on 157 Parkinson's SNPs (GP2 meta-analysis)",
+    x = "Cumulative Genetic Odds Ratio",
+    y = "Density"
+  ) +
+  theme_minimal()
+```

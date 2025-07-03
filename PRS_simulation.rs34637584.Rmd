@@ -52,203 +52,6 @@ gwas <- as.data.table(read_excel(gwas_file, sheet = "Table S4"))
 head(gwas)
 ```
 
-```{r sim and plot func}
-simulate_and_plot_prs <- function(prs_table, label = "All SNPs") {
-  n_individuals <- 100000
-  set.seed(123)
-
-  prs_scores <- numeric(n_individuals)
-
-  for (i in seq_len(nrow(prs_table))) {
-    genotype <- rbinom(n_individuals, size = 2, prob = prs_table$AF_EUR[i])
-    prs_scores <- prs_scores + genotype * prs_table$Beta[i]
-  }
-
-  prs_df <- data.frame(PRS = prs_scores, OR = exp(prs_scores))
-  prs_df$Source <- label
-
-  # Summaries
-  cat("\n===== Summary for:", label, "=====\n")
-  cat("PRS (log-odds scale):\n")
-  print(summary(prs_df$PRS))
-  cat("\nOR (exp of PRS):\n")
-  print(summary(prs_df$OR))
-
-  # Return full data frame for combined plotting later
-  return(prs_df)
-}
-```
-
-## Step 2: Select and Rename Relevant Columns
-
-We extract columns relevant to PRS construction:
-- `rsID`: SNP identifier
-- `Effect allele`: allele associated with the effect (risk/protection)
-- `Freq, EUR non-Finnish`: frequency of effect allele in EUR population
-- `BETA, EUR non-Finnish`: log-odds ratio of effect allele on disease risk
-
-```{r clean-columns}
-# Rename columns for clarity
-setnames(gwas,
-         c("rsID", "Effect allele", "Freq, EUR non-Finnish", "BETA, EUR non-Finnish"),
-         c("rsID", "Effect_Allele", "AF_EUR", "Beta"))
-
-# Drop rows with missing values
-gwas_clean <- gwas[!is.na(rsID) & !is.na(Effect_Allele) & !is.na(AF_EUR) & !is.na(Beta)]
-
-# Filter out rare SNPs (AF < 0.01)
-gwas_filtered <- gwas_clean[AF_EUR >= 0.01]
-
-gwas_rs34637584 <- gwas[rsID == "rs34637584"]
-gwas_wo_rs34637584 <- gwas[rsID != "rs34637584"]
-
-# Show summaries for verification
-cat("=== All SNPs ===\n")
-summary(gwas_filtered$Beta)
-cat("\n=== Without rs34637584 ===\n")
-summary(gwas_wo_rs34637584$Beta)
-cat("\n=== Only rs34637584 ===\n")
-summary(gwas_rs34637584$Beta)
-```
-
-## Step 3: Save Cleaned PRS Table for Reuse
-
-We save the cleaned SNP list to a `.tsv` file for simulation.
-
-```{r save-prs-table}
-# Save full set
-fwrite(gwas_filtered[, .(rsID, Effect_Allele, AF_EUR, Beta)],
-       "PRS_all_SNPs.tsv", sep = "\t")
-
-# Save without rs34637584
-fwrite(gwas_wo_rs34637584[, .(rsID, Effect_Allele, AF_EUR, Beta)],
-       "PRS_wo_rs34637584.tsv", sep = "\t")
-
-# Save rs34637584 only
-fwrite(gwas_rs34637584[, .(rsID, Effect_Allele, AF_EUR, Beta)],
-       "PRS_rs34637584.tsv", sep = "\t")
-```
-
-```{r download-button, echo=FALSE}
-# Download buttons (optional, only for Rmd with download_this)
-as.data.frame(gwas_filtered[, .(rsID, Effect_Allele, AF_EUR, Beta)]) %>% download_this(
-  output_name = "PRS_all_SNPs", output_extension = ".xlsx",
-  button_label = "Download: All SNPs", button_type = "primary", has_icon = TRUE, icon = "fa fa-save"
-)
-
-as.data.frame(gwas_wo_rs34637584[, .(rsID, Effect_Allele, AF_EUR, Beta)]) %>% download_this(
-  output_name = "PRS_wo_rs34637584", output_extension = ".xlsx",
-  button_label = "Download: Without rs34637584", button_type = "primary", has_icon = TRUE, icon = "fa fa-minus-circle"
-)
-
-as.data.frame(gwas_rs34637584[, .(rsID, Effect_Allele, AF_EUR, Beta)]) %>% download_this(
-  output_name = "PRS_only_rs34637584", output_extension = ".xlsx",
-  button_label = "Download: Only rs34637584", button_type = "primary", has_icon = TRUE, icon = "fa fa-dot-circle"
-)
-
-```
-
-## Step 4: Simulate Genotypes and Calculate PRS and OR
-
-We simulate genotypes for 100,000 synthetic individuals assuming Hardy-Weinberg equilibrium using the effect allele frequencies. For each SNP:
-- Genotype is drawn from a binomial distribution with 2 trials and success probability = `AF_EUR`
-- PRS is computed as: `sum(Beta * Genotype)`
-
-```{r simulate-prs}
-# set seed for reproducible simulation
-prs_only_rs34637584 <- gwas_rs34637584[, .(rsID, Beta, AF_EUR)]
-prs_wo_rs34637584<- gwas_wo_rs34637584[, .(rsID, Beta, AF_EUR)]
-prs<- gwas[, .(rsID, Beta, AF_EUR)]
-
-set.seed(123)
-
-prs_df_wo_rs34637584 <- simulate_and_plot_prs(na.omit(prs_wo_rs34637584), label = "All SNPs minus rs34637584")
-prs_df_rs34637584 <- simulate_and_plot_prs(prs_only_rs34637584, label = "Only rs34637584")
-prs_df <- simulate_and_plot_prs(na.omit(prs), label = "All SNPs")
-```
-
-
-## Step 5: Visualize PRS Distribution without rs34637584 and with only rs34637584
-
-Figure: Simulated distribution of polygenic risk scores (PRS) in a synthetic European population (n = 100,000), based on Parkinson’s-associated SNPs from the GP2 meta-analysis. Each PRS is computed as the sum of effect allele dosages (0, 1, or 2) weighted by GWAS-derived effect sizes (Beta), which are expressed on the log-odds scale. The x-axis represents cumulative genetic liability: a PRS of 0 corresponds to baseline odds, while values above or below 0 indicate increased or decreased genetic risk, respectively.
-
-The red curve shows the PRS distribution based on all GWAS-significant SNPs except rs34637584, reflecting the diffuse signal of many common variants with modest effects. This distribution is approximately normal and centered slightly above 0, consistent with a modest shift in cumulative genetic liability due to the presence of positively associated risk alleles.
-
-The blue curve shows the PRS distribution based on rs34637584 alone, a low-frequency variant with a large effect size. The sharply peaked and highly skewed shape reflects the rarity of this allele in the population. Most individuals carry no copies, while a small proportion carry one or two, leading to a narrow but long-tailed distribution of risk. The comparison highlights the distinct contribution of rs34637584 relative to the background of polygenic risk from other loci.
-
-```{r plot simulated prs}
-combined_prs <- rbind(prs_df_wo_rs34637584, prs_df_rs34637584, prs_df)
-
-# Set levels to ensure all sources appear in legend and plot
-combined_prs$Source <- factor(
-  combined_prs$Source,
-  levels = c("All SNPs", "All SNPs minus rs34637584", "Only rs34637584")
-)
-
-
-ggplot(rbind(combined_prs), aes(x = PRS, color = Source)) +
-  geom_density(fill = NA, size = 1.2) +
-  labs(title = "PRS Comparison", x = "Polygenic Risk Score (log-odds)", y = "Density") +
-  theme_minimal()
-```
-
-Because the distribution of all SNPs PRS and all SNPs without PRS are nearly identical, we can't see them both in the plot above. Sanity check here:
-
-```{r}
-ggplot(combined_prs, aes(x = PRS, fill = Source, color = Source)) +
-  geom_density(alpha = 0.5) +
-  labs(title = "PRS Comparison by Source", x = "Polygenic Risk Score (log-odds)", y = "Density") +
-  theme_minimal() +
-  facet_wrap(~ Source)
-```
-
-The distribution of simulated PRS is so similar for All SNPs and All SNPs minus rs34637584, we sanity check to make sure the simulated PRS are really different.
-
-We confirm that they are not identical by tiny differences in summary statistics (so not a coding error), but that the SNP we removed (rs34637584) makes almost no difference to the w/o rs34637584 distribution compared to all SNPs.
-
-```{r sanity check}
-# Directly compare the means (or other statistics)
-mean(prs_df$PRS)
-mean(prs_df_wo_rs34637584$PRS)
-sd(prs_df$PRS)
-sd(prs_df_wo_rs34637584$PRS)
-
-# Check for near identity
-all.equal(prs_df$PRS, prs_df_wo_rs34637584$PRS)
-
-# Visual check: overlaid histograms
-ggplot(rbind(prs_df, prs_df_wo_rs34637584), aes(x = PRS, fill = Source)) +
-  geom_histogram(alpha = 0.5, position = "identity", bins = 40) +
-  theme_minimal()
-
-# Statistical test (Kolmogorov-Smirnov test is sensitive to any shape difference)
-ks.test(prs_df$PRS, prs_df_wo_rs34637584$PRS)
-```
-
-We further in
-```{r summarize rare allele}
-> nrow(geno_df_rs %>% dplyr::filter(rs34637584 == 1))
-[1] 294
-> nrow(geno_df_all %>% dplyr::filter(rs34637584 == 1))
-[1] 298
-```
-
-### Visualize Odds Ratio Distribution
-
-This plot shows the same simulated data, but after applying an exponential transformation to the PRS: exp(PRS). While the original PRS is on a log-odds scale (because beta values from GWAS are on a log scale), exponentiating it places the values on a more intuitive odds ratio (OR) scale. This transformation helps interpret each individual’s cumulative genetic burden in terms of multiplicative change in odds of Parkinson’s disease. For example, exp(PRS) = 2 means twice the odds of disease compared to someone with a baseline PRS of 0 (OR = 1).
-
-The resulting distribution is right-skewed and shows that most individuals in the population have a cumulative OR between 1 and 3, with a small proportion reaching much higher values (>5). Some individuals fall below OR = 1, indicating a net protective genetic profile (i.e., more protective alleles than risk alleles).
-
-```{r}
-# Plot cumulative OR distribution
-ggplot(combined_prs, aes(x = OR, fill = Source)) +
-  geom_density(alpha = 0.5) +
-  labs(title = "Cumulative OR Comparison", x = "Cumulative Odds Ratio", y = "Density") +
-  theme_minimal()
-```
-
-## Step 6 Download Data
-
 ```{r re-sim with genotypes func}
 simulate_and_get_genotypes <- function(prs_table, label = "All SNPs") {
   n_individuals <- 100000
@@ -268,11 +71,169 @@ simulate_and_get_genotypes <- function(prs_table, label = "All SNPs") {
 }
 ```
 
-```{r resim}
-geno_df_all <- simulate_and_get_genotypes(na.omit(prs), "All_SNPs")
-geno_df_wo_rs <- simulate_and_get_genotypes(na.omit(prs_wo_rs34637584), "All_SNPs_minus_rs34637584")
-geno_df_rs <- simulate_and_get_genotypes(prs_only_rs34637584, "Only_rs34637584")
+## Step 2: Select and Rename Relevant Columns
+
+We extract columns relevant to PRS construction:
+- `rsID`: SNP identifier
+- `Effect allele`: allele associated with the effect (risk/protection)
+- `Freq, EUR non-Finnish`: frequency of effect allele in EUR population
+- `BETA, EUR non-Finnish`: log-odds ratio of effect allele on disease risk
+
+Summarizing the range of effect sizes highlights the impact of rs34637584:
+In the full set of SNPs, the maximum β (effect size) is 2.29, which corresponds to rs34637584. When this variant is excluded, the maximum β drops substantially to 0.81. This demonstrates that no other single variant in the set approaches the effect size of rs34637584.
+
+```{r clean-columns}
+# Rename columns for clarity
+setnames(gwas,
+         c("rsID", "Effect allele", "Freq, EUR non-Finnish", "BETA, EUR non-Finnish"),
+         c("rsID", "Effect_Allele", "AF_EUR", "Beta"))
+
+# Drop rows with missing values
+gwas <- gwas[!is.na(rsID) & !is.na(Effect_Allele) & !is.na(AF_EUR) & !is.na(Beta)]
+
+gwas_rs34637584 <- gwas[rsID == "rs34637584"]
+gwas_wo_rs34637584 <- gwas[rsID != "rs34637584"]
+
+# Show summaries for verification
+cat("=== All SNPs ===\n")
+summary(gwas$Beta)
+cat("\n=== Without rs34637584 ===\n")
+summary(gwas_wo_rs34637584$Beta)
+cat("\n=== Only rs34637584 ===\n")
+summary(gwas_rs34637584$Beta)
 ```
+
+## Step 3: Save Cleaned PRS Table for Reuse
+
+We provide the cleaned SNP lists for download; these are used as input for genotype simulation and PRS estimation. Each sheet is a SNP table for a PRS scenario, with columns: rsID, effect allele, frequency, and effect size. Saving at this step ensures all downstream simulation results are reproducible from these exact variant definitions.
+
+```{r save-prs-table}
+# Make named list of cleaned PRS variant tables
+prs_tables_list <- list(
+  All_SNPs = as.data.frame(gwas[, .(rsID, Effect_Allele, AF_EUR, Beta)]),
+  All_SNPs_minus_rs34637584 = as.data.frame(gwas_wo_rs34637584[, .(rsID, Effect_Allele, AF_EUR, Beta)]),
+  Only_rs34637584 = as.data.frame(gwas_rs34637584[, .(rsID, Effect_Allele, AF_EUR, Beta)])
+)
+
+# Button for instant Excel multi-sheet download at this key QC step
+prs_tables_list %>% download_this(
+  output_name = "PRS_curated_variant_lists",
+  output_extension = ".xlsx",
+  button_label = "Download: All PRS variant tables (.xlsx)",
+  button_type = "primary",
+  has_icon = TRUE,
+  icon = "fa fa-save"
+)
+```
+
+## Step 4: Simulate Genotypes and Calculate PRS and OR
+
+We simulate genotypes for 100,000 synthetic individuals assuming Hardy-Weinberg equilibrium using the effect allele frequencies. For each SNP:
+- Genotype is drawn from a binomial distribution with 2 trials and success probability = `AF_EUR`
+- PRS is computed as: `sum(Beta * Genotype)`
+
+```{r resim}
+# Prepare SNP lists to be used to simulate genotypes by selecting just the rsID, Beta, and AF
+prs_only_rs34637584 <- gwas_rs34637584[, .(rsID, Beta, AF_EUR)]
+prs_wo_rs34637584 <- gwas_wo_rs34637584[, .(rsID, Beta, AF_EUR)]
+prs <- gwas[, .(rsID, Beta, AF_EUR)] # full data
+
+# Run simulation
+set.seed(123)
+geno_df_all <- simulate_and_get_genotypes(na.omit(prs), "All SNPs")
+geno_df_wo_rs <- simulate_and_get_genotypes(na.omit(prs_wo_rs34637584), "All SNPs minus rs34637584")
+geno_df_rs <- simulate_and_get_genotypes(prs_only_rs34637584, "Only rs34637584")
+```
+
+
+## Step 5: Visualize PRS Distribution without rs34637584 and with only rs34637584
+
+Figure: Simulated distribution of polygenic risk scores (PRS) in a synthetic European population (n = 100,000), based on Parkinson’s-associated SNPs from the GP2 meta-analysis. Each PRS is computed as the sum of effect allele dosages (0, 1, or 2) weighted by GWAS-derived effect sizes (Beta), which are expressed on the log-odds scale. The x-axis represents cumulative genetic liability: a PRS of 0 corresponds to baseline odds, while values above or below 0 indicate increased or decreased genetic risk, respectively.
+
+The red curve shows the PRS distribution based on all GWAS-significant SNPs except rs34637584, reflecting the diffuse signal of many common variants with modest effects. This distribution is approximately normal and centered slightly above 0, consistent with a modest shift in cumulative genetic liability due to the presence of positively associated risk alleles.
+
+The blue curve shows the PRS distribution based on rs34637584 alone, a low-frequency variant with a large effect size. The sharply peaked and highly skewed shape reflects the rarity of this allele in the population. Most individuals carry no copies, while a small proportion carry one or two, leading to a narrow but long-tailed distribution of risk. The comparison highlights the distinct contribution of rs34637584 relative to the background of polygenic risk from other loci.
+
+```{r plot simulated prs}
+# Add Source column to each, just before rbind
+geno_df_all$Source <- "All SNPs"
+geno_df_wo_rs$Source <- "All SNPs minus rs34637584"
+geno_df_rs$Source <- "Only rs34637584"
+
+# Combine for plotting: just PRS, OR, Source columns
+combined_prs <- rbind(
+  geno_df_all[, c("PRS", "OR", "Source")],
+  geno_df_wo_rs[, c("PRS", "OR", "Source")],
+  geno_df_rs[, c("PRS", "OR", "Source")]
+)
+
+# Set levels to ensure all sources appear in legend and plot
+combined_prs$Source <- factor(
+  combined_prs$Source,
+  levels = c("All SNPs", "All SNPs minus rs34637584", "Only rs34637584")
+)
+
+ggplot(rbind(combined_prs), aes(x = PRS, color = Source)) +
+  geom_density(fill = NA, size = 1.2) +
+  labs(title = "PRS Comparison", x = "Polygenic Risk Score (log-odds)", y = "Density") +
+  theme_minimal()
+```
+
+Because the distribution of all SNPs PRS and all SNPs without PRS are nearly identical, we can't see them both in the plot above. Sanity check here:
+
+```{r, echo=FALSE}
+ggplot(combined_prs, aes(x = PRS, fill = Source, color = Source)) +
+  geom_density(alpha = 0.5) +
+  labs(title = "PRS Comparison by Source", x = "Polygenic Risk Score (log-odds)", y = "Density") +
+  theme_minimal() +
+  facet_wrap(~ Source)
+```
+
+The distribution of simulated PRS is so similar for All SNPs and All SNPs minus rs34637584, we sanity check to make sure the simulated PRS are really different.
+
+We confirm that they are not identical by tiny differences in summary statistics (so not a coding error), but that the SNP we removed (rs34637584) makes almost no difference to the w/o rs34637584 distribution compared to all SNPs.
+
+```{r sanity check,echo=FALSE}
+# Directly compare the means (or other statistics)
+mean(geno_df_all$PRS)
+mean(geno_df_wo_rs$PRS)
+sd(geno_df_all$PRS)
+sd(geno_df_wo_rs$PRS)
+
+# Check for near identity
+all.equal(geno_df_all$PRS, geno_df_wo_rs$PRS)
+
+# Visual check: overlaid histograms
+ggplot(rbind(geno_df_all[, c("PRS", "OR", "Source")], geno_df_wo_rs[, c("PRS", "OR", "Source")]), aes(x = PRS, fill = Source)) +
+  geom_histogram(alpha = 0.5, position = "identity", bins = 40) +
+  theme_minimal()
+
+# Statistical test (Kolmogorov-Smirnov test is sensitive to any shape difference)
+ks.test(geno_df_all$PRS, geno_df_wo_rs$PRS)
+```
+
+We further verify that the simulated genotype counts for rs34637584 match expectations both when simulating the variant alone and within the context of all SNPs—by tabulating the number of individuals with 0, 1, or 2 effect alleles in each scenario.
+
+```{r summarize rare allele}
+table(geno_df_rs$rs34637584)
+table(geno_df_all$rs34637584)
+```
+
+### Visualize Odds Ratio Distribution
+
+This plot shows the same simulated data, but after applying an exponential transformation to the PRS: exp(PRS). While the original PRS is on a log-odds scale (because beta values from GWAS are on a log scale), exponentiating it places the values on a more intuitive odds ratio (OR) scale. This transformation helps interpret each individual’s cumulative genetic burden in terms of multiplicative change in odds of Parkinson’s disease. For example, exp(PRS) = 2 means twice the odds of disease compared to someone with a baseline PRS of 0 (OR = 1).
+
+The resulting distribution is right-skewed and shows that most individuals in the population have a cumulative OR between 1 and 3, with a small proportion reaching much higher values (>5). Some individuals fall below OR = 1, indicating a net protective genetic profile (i.e., more protective alleles than risk alleles).
+
+```{r}
+# Plot cumulative OR distribution
+ggplot(combined_prs, aes(x = OR, fill = Source)) +
+  geom_density(alpha = 0.5) +
+  labs(title = "Cumulative OR Comparison", x = "Cumulative Odds Ratio", y = "Density") +
+  theme_minimal()
+```
+
+## Step 6 Download Data
 
 ```{r download-button-2, echo=FALSE}
 # Step 1: Create named list of data frames
@@ -291,4 +252,87 @@ simulated_prs_list %>% download_this(
   has_icon = TRUE,
   icon = "fa fa-save"
 )
+```
+
+## Step 7 Compare genotype simulations and resulting PRS yourself
+
+Double click a simulation in the legend to view just its PRS distribution. (Double click again to return to the whole plot before choosing another simulation from the legend.)
+
+Comparing these PRS distributions demonstrates that when a handful of rare or high-effect SNPs are used, the resulting distribution is highly non-normal, exhibiting prominent spikes. This pattern arises because, with so few variants included, there are only a limited number of possible genotype combinations; most individuals have the same PRS value, while a minority with one or more rare alleles form smaller secondary peaks. In contrast, when the PRS aggregates many independent SNPs with moderate effects, the distribution becomes smooth and approximately normal, reflecting the Central Limit Theorem. Thus, the spiky distributions seen in the targeted, rare-variant simulations are both expected and biologically meaningful, highlighting how the spectrum of genetic risk depends on the number and types of variants considered.
+
+```{r, simlist, echo=FALSE}
+# Generate a list of simulation scenarios with various filters
+simulation_scenarios <- list(
+  All_SNPs = gwas,
+  Exclude_rs34637584 = gwas[rsID != "rs34637584"],
+  Only_High_Effect_SNPs = gwas[abs(Beta) > 0.2],
+  Top10_Largest_Effect_SNPs = gwas[order(-abs(Beta))][1:10],
+  Exclude_Top5_Largest_Effect_SNPs = gwas[!rsID %in% head(gwas[order(-abs(Beta))]$rsID, 5)],
+  Only_Common_SNPs = gwas[AF_EUR > 0.05],
+  Only_Rare_SNPs = gwas[AF_EUR < 0.05],
+  Only_Low_Effect_SNPs = gwas[abs(Beta) < 0.2]
+)
+
+sim_results <- lapply(names(simulation_scenarios), function(label) {
+  df <- simulate_and_get_genotypes(simulation_scenarios[[label]], label)
+  data.frame(
+    PRS = df$PRS,
+    OR = df$OR,
+    SimName = label
+  )
+})
+names(sim_results) <- names(simulation_scenarios)
+sim_results_long <- data.table::rbindlist(sim_results) # robust to different nrows
+```
+
+```{r sim names}
+library(dplyr)
+library(knitr)
+
+scenario_summary <- lapply(names(simulation_scenarios), function(name) {
+  snps <- simulation_scenarios[[name]]
+  data.frame(
+    Scenario = name,
+    SNPs_included = nrow(snps),
+    Beta_min = round(min(snps$Beta), 3),
+    Beta_max = round(max(snps$Beta), 3),
+    AF_min = round(min(snps$AF_EUR), 3),
+    AF_max = round(max(snps$AF_EUR), 3)
+  )
+})
+scenario_summary_df <- bind_rows(scenario_summary)
+kable(scenario_summary_df, caption = "Summary of SNP filters and PRS simulation scenarios")
+```
+
+```{r plotly, echo=FALSE}
+# Combine simulation results for plotting (assumes each has PRS and SimName/Source)
+library(dplyr)
+library(plotly)
+
+# If your sim_results is a named list of data frames
+# and each data frame has PRS (and others)
+plotly_df <- bind_rows(lapply(names(sim_results), function(name) {
+  df <- sim_results[[name]]
+  # Add scenario label as a column
+  df$Scenario <- name
+  # Only keep the PRS (and optionally OR) columns for plotting
+  df[, c("PRS", "Scenario")]
+}))
+
+# Interactive density plot
+plot_ly() %>%
+  add_histogram(
+    data = plotly_df,
+    x = ~PRS,
+    color = ~Scenario,
+    opacity = 0.5,
+    histnorm = "probability density",
+    nbinsx = 60
+  ) %>%
+  layout(
+    barmode = "overlay",
+    title = "Interactive PRS Distribution by Simulation Scenario",
+    xaxis = list(title = "Polygenic Risk Score (log-odds)"),
+    yaxis = list(title = "Density")
+  )
 ```

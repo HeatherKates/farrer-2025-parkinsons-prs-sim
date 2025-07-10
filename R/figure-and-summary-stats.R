@@ -136,40 +136,63 @@ cat("Summary saved as PRS_simulation_summary.txt\n")
 
 ## Standardized PRS
 
-## Standardized PRS analysis and plot
+library(readxl)
+library(ggplot2)
 
-# 1. Standardize PRS vectors to 'All' mean/SD
+#--- Standardize PRS vectors to 'All' mean/SD (already done above) ---
 std_mean <- sim2$mean_PRS
 std_sd   <- sim2$sd_PRS
 xcut <- 2.2
 xcut_std <- (xcut - std_mean) / std_sd
 
+# Legend-friendly names (ensure these only appear here for consistency)
+set_known <- "Known (N=95)"
+set_all   <- "Known and Novel (N=156)"
+
 PRS1_std <- (sim1$PRS - std_mean) / std_sd
 PRS2_std <- (sim2$PRS - std_mean) / std_sd
-
 df_std <- rbind(
-  data.frame(PRS = PRS1_std, Set = "Known (Standardized to All)"),
-  data.frame(PRS = PRS2_std, Set = "All (Standardized to All)")
+  data.frame(PRS = PRS1_std, SNP_Set = set_known),
+  data.frame(PRS = PRS2_std, SNP_Set = set_all)
+)
+cols_std <- c(
+  "Known (N=95)" = "#3182bd",
+  "Known and Novel (N=156)" = "#de2d26"
 )
 
-cols_std <- c("Known (Standardized to All)" = "#3182bd", "All (Standardized to All)" = "#de2d26")
-
-# 2. Plot, with one set of reference mean/SD lines
-plt_std <- ggplot(df_std, aes(x = PRS, color = Set, fill = Set)) +
-  geom_density(alpha = 0.25, adjust = 2) +
+#--- Professional plot layout ---
+plt_std <- ggplot(df_std, aes(x = PRS, color = SNP_Set, fill = SNP_Set)) +
+  geom_density(alpha = 0.23, adjust = 2) +
   geom_vline(xintercept = 0, color = "gray30", linetype = "dashed", linewidth = 1) +
-  geom_vline(xintercept = c(-1, 1), color = "gray50", linetype = 3, linewidth = 0.9) +
-  geom_vline(xintercept = c(-2, 2), color = "gray50", linetype = 3, linewidth = 0.7) +
-  geom_vline(xintercept = c(-3, 3), color = "gray50", linetype = 3, linewidth = 0.5) +
+  geom_vline(xintercept = c(-1,1), color = "gray50", linetype = 3, linewidth = 0.9) +
+  geom_vline(xintercept = c(-2,2), color = "gray50", linetype = 3, linewidth = 0.7) +
+  geom_vline(xintercept = c(-3,3), color = "gray50", linetype = 3, linewidth = 0.5) +
   geom_vline(xintercept = xcut_std, color = "purple", linetype = 1, linewidth = 1.2) +
   scale_color_manual(values = cols_std) +
   scale_fill_manual(values = cols_std) +
   labs(
-    title = "Standardized PRS Distributions",
-    subtitle = "Standardized to All SNPs: Dashed = Mean (All), Gray Dotted = ±1,2,3 SD (All), Purple = 2.2 threshold",
-    x = "Standardized PRS (All SNPs)", y = "Density"
+    title = "Standardized PRS Distributions from Simulated Genotypes\nUsing Different SNP Sets",
+    subtitle = "100,000 genotypes simulated per group. Both curves standardized to all-SNPs mean and SD.",
+    x = "Standardized PRS (All SNPs)", 
+    y = "Density",
+    color = "SNP Set", fill = "SNP Set"
   ) +
-  theme_bw(base_size = 16)
+  #annotate("text", x = xcut_std, y = 0.41, label = "3.24 SD threshold", color = "purple", angle = 90, hjust = 0, vjust = -0.3, size = 4) +
+  theme_bw(base_size = 16) +
+  theme(
+    legend.position = "inside",
+    legend.position.inside = c(.99, .99), # top right inside
+    legend.justification = c(.98, .98),   # anchor the corner to 1,1
+    legend.background = element_rect(fill = "white", color = NA),
+    legend.title = element_text(face = "bold",size = 12),
+    legend.text = element_text(face="bold",size=10),
+    plot.title = element_text(face = "bold", size = 18),
+    plot.subtitle = element_text(size = 14),
+    panel.grid.major = element_line(color = "grey90"),
+    panel.grid.minor = element_blank()
+  )+
+  guides( colour = guide_colourbar(position = "bottom"), size = guide_legend(position = "top"), alpha = guide_legend(position = "inside") ) + theme(legend.position = "inside")
+
 ggsave("Standardized_PRS_distributions.png", plt_std, width = 11, height = 7, dpi = 300)
 cat("Standardized PRS plot saved as Standardized_PRS_distributions.png\n")
 
